@@ -1,0 +1,30 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - VECTOR_BACKEND=qdrant
+      - QDRANT_URL=http://qdrant:6333
+      - REDIS_URL=redis://redis:6379/0
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}   # 需要真实模型时取消注释
+    depends_on:
+      - qdrant
+      - redis
+    # 启动时先建索引再起服务
+    command: sh -c "python -m scripts.build_index && uvicorn app.api.main:app --host 0.0.0.0 --port 8000"
+
+volumes:
+  qdrant_data:

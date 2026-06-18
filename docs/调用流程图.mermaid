@@ -1,0 +1,19 @@
+%% AgentDesk 一次 /chat 请求的调用流程（含反思重试循环）
+flowchart TD
+    U([用户提问 POST /chat]) --> API["app/api/main.py<br/>FastAPI 接收 query"]
+    API --> RUN["app/graph/build_graph.py<br/>run_query 启动编排"]
+
+    RUN --> P["planner_node<br/>查询改写 rewrite()<br/>1条问题 → 多条 query"]
+    P --> R["retrieval_node<br/>混合检索 retrieve_multi<br/>向量 + BM25 → RRF → Rerank"]
+    R --> T["tool_node<br/>轻量路由：算术→calculator<br/>问库统计→kb_stats"]
+    T --> W["writer_node<br/>带证据+工具结果生成答案<br/>句末标注 [chunk_id]"]
+    W --> C["critic_node<br/>judge() 事实核查<br/>算 faithfulness 分数"]
+
+    C --> Q{should_retry<br/>答案被证据支撑?}
+    Q -->|faithful 达标| END([返回 answer + 引用 + 执行链 trace])
+    Q -->|不达标 且 已达 max_iterations=3| END
+    Q -->|不达标 且 仍可重试| R
+
+    %% 兜底说明
+    RUN -.->|langgraph 装不上时| SEQ["_run_sequential<br/>等价顺序+循环执行"]
+    SEQ -.-> P

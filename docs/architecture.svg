@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 700" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <style>
+      .layer{fill:#f1f5f9;stroke:#cbd5e1;rx:10}
+      .ltitle{fill:#64748b;font-size:12px;font-weight:700;letter-spacing:1px}
+      .box{rx:8;stroke-width:1.5}
+      .agent{fill:#eef2ff;stroke:#6366f1}
+      .infra{fill:#ecfeff;stroke:#06b6d4}
+      .data{fill:#f0fdf4;stroke:#22c55e}
+      .api{fill:#fef3c7;stroke:#f59e0b}
+      .t{fill:#0f172a;font-size:13px;font-weight:600;text-anchor:middle}
+      .s{fill:#475569;font-size:10.5px;text-anchor:middle}
+      .edge{stroke:#475569;stroke-width:1.6;fill:none;marker-end:url(#arrow)}
+      .redge{stroke:#ef4444;stroke-width:1.6;fill:none;marker-end:url(#arrow);stroke-dasharray:5 3}
+    </style>
+  </defs>
+
+  <text x="480" y="30" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a">AgentDesk · 企业级 Agentic RAG + 多智能体系统</text>
+  <text x="480" y="50" text-anchor="middle" font-size="12" fill="#64748b">LangGraph 编排 · 混合检索 · MCP 工具 · 反思重试 · 可降级向量库/缓存</text>
+
+  <!-- API layer -->
+  <rect class="layer" x="30" y="70" width="900" height="70"/>
+  <text class="ltitle" x="46" y="92">接入层 · FastAPI</text>
+  <rect class="box api" x="120" y="98" width="160" height="34"/><text class="t" x="200" y="119">POST /chat</text>
+  <rect class="box api" x="320" y="98" width="160" height="34"/><text class="t" x="400" y="119">POST /eval/run</text>
+  <rect class="box api" x="520" y="98" width="160" height="34"/><text class="t" x="600" y="119">GET /trace/{id}</text>
+  <rect class="box api" x="720" y="98" width="140" height="34"/><text class="t" x="790" y="119">GET /health</text>
+
+  <!-- Orchestration layer -->
+  <rect class="layer" x="30" y="160" width="900" height="220"/>
+  <text class="ltitle" x="46" y="182">编排层 · LangGraph StateGraph（状态机 + 条件边）</text>
+
+  <rect class="box agent" x="70" y="210" width="150" height="56"/><text class="t" x="145" y="233">Planner</text><text class="s" x="145" y="250">查询改写 multi-query</text>
+  <rect class="box agent" x="265" y="210" width="150" height="56"/><text class="t" x="340" y="233">Retrieval</text><text class="s" x="340" y="250">混合检索+Rerank</text>
+  <rect class="box agent" x="460" y="210" width="150" height="56"/><text class="t" x="535" y="233">Tool</text><text class="s" x="535" y="250">MCP 工具调用</text>
+  <rect class="box agent" x="655" y="210" width="150" height="56"/><text class="t" x="730" y="233">Writer</text><text class="s" x="730" y="250">带引用生成</text>
+  <rect class="box agent" x="460" y="305" width="150" height="56"/><text class="t" x="535" y="328">Critic</text><text class="s" x="535" y="345">faithfulness 判定</text>
+
+  <!-- edges in orchestration -->
+  <path class="edge" d="M220,238 L263,238"/>
+  <path class="edge" d="M415,238 L458,238"/>
+  <path class="edge" d="M610,238 L653,238"/>
+  <path class="edge" d="M730,266 L730,333 L612,333"/>
+  <!-- retry loop -->
+  <path class="redge" d="M460,345 L340,345 L340,268"/>
+  <text x="350" y="362" font-size="10.5" fill="#ef4444">不达标且 iter&lt;max → 重试</text>
+  <!-- end -->
+  <path class="edge" d="M535,361 L535,392"/>
+  <text x="548" y="380" font-size="10.5" fill="#475569">faithful / 超限 → 结束</text>
+
+  <!-- Capability layer -->
+  <rect class="layer" x="30" y="400" width="440" height="160"/>
+  <text class="ltitle" x="46" y="422">RAG 子系统</text>
+  <rect class="box infra" x="55" y="435" width="180" height="44"/><text class="t" x="145" y="455">向量检索 + BM25</text><text class="s" x="145" y="470">RRF 融合</text>
+  <rect class="box infra" x="255" y="435" width="190" height="44"/><text class="t" x="350" y="455">Rerank 重排</text><text class="s" x="350" y="470">bge-reranker 可插拔</text>
+  <rect class="box infra" x="55" y="495" width="390" height="44"/><text class="t" x="250" y="515">查询改写 · chunk 切割 · 引用溯源</text>
+
+  <rect class="layer" x="490" y="400" width="440" height="160"/>
+  <text class="ltitle" x="506" y="422">工具层 · MCP（JSON-RPC 2.0 / stdio）</text>
+  <rect class="box infra" x="515" y="435" width="180" height="44"/><text class="t" x="605" y="455">MCP Server/Client</text><text class="s" x="605" y="470">initialize·list·call</text>
+  <rect class="box infra" x="715" y="435" width="190" height="44"/><text class="t" x="810" y="455">calculator · kb_stats</text><text class="s" x="810" y="470">AST 白名单防注入</text>
+  <rect class="box infra" x="515" y="495" width="390" height="44"/><text class="t" x="710" y="515">工具名/参数校验 · 输出截断 · 错误处理</text>
+
+  <!-- Data layer -->
+  <rect class="layer" x="30" y="580" width="900" height="90"/>
+  <text class="ltitle" x="46" y="602">数据层（可降级：缺依赖自动回退内存）</text>
+  <rect class="box data" x="120" y="612" width="200" height="44"/><text class="t" x="220" y="632">Qdrant 向量库</text><text class="s" x="220" y="648">↔ 内存 VectorStore</text>
+  <rect class="box data" x="380" y="612" width="200" height="44"/><text class="t" x="480" y="632">Redis 缓存</text><text class="s" x="480" y="648">↔ 进程内 dict</text>
+  <rect class="box data" x="640" y="612" width="200" height="44"/><text class="t" x="740" y="632">Trace 日志</text><text class="s" x="740" y="648">执行链回放</text>
+
+  <!-- cross-layer arrows -->
+  <path class="edge" d="M200,140 L200,206"/>
+  <path class="edge" d="M340,380 L340,433"/>
+  <path class="edge" d="M535,266 L535,305" opacity="0"/>
+  <path class="edge" d="M605,361 L605,433" opacity="0"/>
+  <path class="edge" d="M340,539 L220,610"/>
+  <path class="edge" d="M250,539 L250,560" opacity="0"/>
+</svg>

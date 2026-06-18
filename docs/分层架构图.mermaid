@@ -1,0 +1,48 @@
+%% AgentDesk 分层架构：入口 → 编排 → 检索/工具 → 基础设施
+flowchart TB
+    subgraph L1["① 入口层 app/api + app/web"]
+        A1["main.py — FastAPI: /chat /health"]
+        A2["web/index.html — 内置聊天界面"]
+    end
+
+    subgraph L2["② 编排层（大脑）app/graph — LangGraph"]
+        B1["state.py — 节点共享状态 AgentState"]
+        B2["nodes.py — planner/retrieval/tool/writer/critic"]
+        B3["build_graph.py — 连图+条件边+顺序兜底"]
+        B4["judge.py — faithfulness 评判（LLM/启发式）"]
+    end
+
+    subgraph L3["③ 检索层 app/rag — RAG 引擎"]
+        C1["indexer.py — 切文档建索引"]
+        C2["retriever.py — 混合检索+多查询融合"]
+        C3["bm25.py — 关键词召回"]
+        C4["rerank.py — 重排"]
+        C5["query_rewrite.py — 查询改写"]
+        C6["store / qdrant_store / store_factory — 向量库(可换)"]
+        C7["cache.py — embedding 缓存(Redis/内存)"]
+    end
+
+    subgraph L4["④ 工具层 app/tools — MCP"]
+        D1["registry.py — 工具注册+4道可靠性闸门"]
+        D2["builtins.py — 计算器(AST白名单)+kb_stats"]
+        D3["dispatch.py — 本地/MCP 切换"]
+        D4["mcp_server.py + mcp_client.py — JSON-RPC over stdio"]
+    end
+
+    subgraph L5["⑤ 基础设施 app/"]
+        E1["config.py — 配置(.env)"]
+        E2["llm.py — Embedding/Chat 封装+离线兜底"]
+    end
+
+    subgraph L6["⑥ 配套 scripts / eval / data / docs"]
+        F1["scripts — build_index/gen_corpus/demo"]
+        F2["eval — run_eval(hit@k/MRR) / faithfulness"]
+        F3["data — docs 示例文档 + index 索引"]
+    end
+
+    L1 --> L2
+    L2 --> L3
+    L2 --> L4
+    L3 --> L5
+    L4 --> L5
+    L2 -.评测/构建.-> L6

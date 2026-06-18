@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>AgentDesk · 多智能体 RAG</title>
+<style>
+  :root{--bg:#0f172a;--card:#1e293b;--mut:#94a3b8;--acc:#6366f1;--ok:#22c55e;--bad:#ef4444;--line:#334155}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;background:#0b1220;color:#e2e8f0}
+  header{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+  header h1{font-size:18px;margin:0}
+  header .sub{color:var(--mut);font-size:12px}
+  main{max-width:860px;margin:0 auto;padding:24px}
+  .row{display:flex;gap:10px}
+  input{flex:1;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:#0f172a;color:#e2e8f0;font-size:15px}
+  button{padding:12px 20px;border:0;border-radius:10px;background:var(--acc);color:#fff;font-size:15px;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  .ex{margin:12px 0;color:var(--mut);font-size:13px}
+  .ex span{cursor:pointer;color:#a5b4fc;margin-right:14px;text-decoration:underline}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-top:16px}
+  .answer{white-space:pre-wrap;line-height:1.6}
+  .badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:20px;margin-left:8px}
+  .ok{background:rgba(34,197,94,.15);color:var(--ok)} .bad{background:rgba(239,68,68,.15);color:var(--bad)}
+  details{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+  summary{cursor:pointer;color:var(--mut);font-size:13px}
+  .chip{display:inline-block;background:#0f172a;border:1px solid var(--line);border-radius:6px;padding:2px 8px;margin:3px 4px 0 0;font-size:12px}
+  .ev{font-size:13px;color:#cbd5e1;border-left:2px solid var(--acc);padding:4px 10px;margin:8px 0}
+  .ev b{color:#e2e8f0}
+  .flow{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#a5b4fc}
+  .mut{color:var(--mut);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>AgentDesk</h1>
+  <span class="sub">企业级 Agentic RAG · planner → retrieval(混合+rerank) → tool(MCP) → writer → critic</span>
+</header>
+<main>
+  <div class="row">
+    <input id="q" placeholder="问点什么，例如：AC-110 套餐的 SLA 是多少？" />
+    <button id="send" onclick="ask()">发送</button>
+  </div>
+  <div class="ex">
+    示例：
+    <span onclick="fill('AC-110 套餐的 SLA 可用性是多少？')">SLA 查询</span>
+    <span onclick="fill('(210-205)/205*100')">计算器工具</span>
+    <span onclick="fill('知识库里有多少个文档？')">知识库统计</span>
+  </div>
+  <div id="out"></div>
+</main>
+<script>
+function fill(t){document.getElementById('q').value=t;}
+function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function flow(trace){
+  return trace.map(t=>{let n=t.node;if(n==='retrieval')n+='#'+(t.iter||'');if(n==='tool'&&t.called&&t.called.length)n+='('+t.called.join(',')+')';return n;}).join(' → ');
+}
+async function ask(){
+  const q=document.getElementById('q').value.trim(); if(!q)return;
+  const btn=document.getElementById('send'); const out=document.getElementById('out');
+  btn.disabled=true; out.innerHTML='<div class="card mut">思考中…</div>';
+  try{
+    const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})});
+    const d=await r.json();
+    const v=d.verify||{}; const vb=v.faithful?'<span class="badge ok">faithful '+v.score+'</span>':'<span class="badge bad">low '+ (v.score??'') +'</span>';
+    let html='<div class="card"><div class="answer">'+esc(d.answer)+'</div>'+vb+' <span class="mut">迭代 '+(d.iterations||1)+'</span>';
+    html+='<div style="margin-top:10px">'+ (d.citations||[]).map(c=>'<span class="chip">'+esc(c)+'</span>').join('') +'</div>';
+    html+='<div class="flow" style="margin-top:10px">'+flow(d.trace||[])+'</div>';
+    if((d.tool_results||[]).length){
+      html+='<details open><summary>工具调用</summary>';
+      d.tool_results.forEach(t=>{html+='<div class="ev"><b>'+esc(t.tool)+'</b> → '+esc(JSON.stringify(t.out))+'</div>';});
+      html+='</details>';
+    }
+    html+='<details><summary>检索证据（top '+(d.evidence||[]).length+'）</summary>';
+    (d.evidence||[]).forEach(e=>{html+='<div class="ev"><b>'+esc(e.doc_id)+'</b> · score '+e.score+'<br>'+esc(e.text)+'</div>';});
+    html+='</details>';
+    html+='</div>';
+    out.innerHTML=html;
+  }catch(e){ out.innerHTML='<div class="card bad">请求失败：'+esc(String(e))+'</div>'; }
+  btn.disabled=false;
+}
+document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter')ask();});
+</script>
+</body>
+</html>

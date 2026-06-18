@@ -1,0 +1,13 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+pydantic-settings>=2.2
+python-dotenv>=1.0
+numpy>=1.26
+streamlit>=1.36
+langgraph>=0.2.0
+langchain-core>=0.3.0
+openai>=1.30
+# 可选：真实向量库与缓存（不装则自动回退内存）
+qdrant-client>=1.9
+redis>=5.0
