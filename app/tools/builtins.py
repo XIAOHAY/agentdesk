@@ -42,7 +42,8 @@ def _kb_stats(args: dict) -> str:
     store = VectorStore()
     store.load(INDEX_PATH)
     docs = sorted({c.doc_id for c in store.chunks})
-    return f"chunks={len(store)}, docs={len(docs)}: {', '.join(docs)}"
+    return (f"文档总数={len(docs)}（权威值：回答文档数量时直接采用此数，请勿自行数列表）"
+            f"；chunk 总数={len(store)}。文档列表：{', '.join(docs)}")
 
 
 def build_registry() -> ToolRegistry:

@@ -335,6 +335,56 @@ st.markdown(
 
 # ============================ 提问区 ============================
 st.markdown("<div class='eyebrow'>Ask the knowledge base</div>", unsafe_allow_html=True)
+
+# —— Chat 模型选择（放主区，醒目）——
+# 运行时覆盖 settings.chat_model；app/llm.py:chat() 每次现读该值，
+# 故一个开关同时作用于 改写(planner)/生成(writer)/裁判(critic) 三处，无需改图或穿参。
+_live = settings.use_llm
+_PRESETS = ["Qwen/Qwen2.5-7B-Instruct", "Qwen/Qwen2.5-14B-Instruct",
+            "Qwen/Qwen2.5-32B-Instruct", "Qwen/Qwen2.5-72B-Instruct",
+            "deepseek-ai/DeepSeek-V3", "自定义…"]
+_cur = st.session_state.get("chat_model", settings.chat_model)
+_opts = _PRESETS if _cur in _PRESETS else [_cur] + _PRESETS
+m_lab, m_sel, m_cus = st.columns([1, 2, 2])
+with m_lab:
+    st.markdown("<div style='padding-top:10px;color:var(--muted);font-weight:600;font-size:.9rem'>🧠 Chat 模型</div>",
+                unsafe_allow_html=True)
+with m_sel:
+    _pick = st.selectbox("chat 模型", _opts,
+                         index=_opts.index(_cur) if _cur in _opts else 0,
+                         label_visibility="collapsed", disabled=not _live)
+with m_cus:
+    if _pick == "自定义…":
+        _pick = st.text_input("自定义模型名", value=("" if _cur in _PRESETS else _cur),
+                              placeholder="如 Qwen/Qwen2.5-72B-Instruct",
+                              label_visibility="collapsed", disabled=not _live).strip()
+    else:
+        _hint = ("影响 改写/生成/裁判三处 · 7B 易把数字写崩，建议 32B+" if _live
+                 else "离线 fallback 不调用大模型，切换无效（需在 .env 配 key）")
+        st.markdown(f"<div style='padding-top:11px;color:var(--faint);font-size:.74rem'>{_hint}</div>",
+                    unsafe_allow_html=True)
+_pick = _pick or settings.chat_model
+if _live:
+    settings.chat_model = _pick               # chat() 每次现读 → 立即生效
+    os.environ["CHAT_MODEL"] = _pick
+st.session_state["chat_model"] = settings.chat_model
+
+# —— 示例问题（点击即问；放输入框上方，省去面试官打字）——
+# 置于输入行之前：按钮在本次 rerun 先于下方 pop("pending_q") 执行，故点击当次即填入并运行。
+_DEMOS = [
+    ("📊 多公司营收", "公司A和公司B 2025年营收分别是多少？"),
+    ("🔢 计算器工具", "(210-205)/205*100"),
+    ("🗂️ 知识库统计", "知识库里有多少个文档？"),
+    ("📄 套餐 SLA", "AC-110 套餐的 SLA 可用性是多少？"),
+    ("📑 报销政策", "公司的报销政策是怎样的？"),
+]
+st.markdown("<div style='color:var(--faint);font-size:.75rem;margin:2px 0 7px'>示例 · 点击即问</div>",
+            unsafe_allow_html=True)
+_dc = st.columns(len(_DEMOS))
+for _i, (_lab, _q) in enumerate(_DEMOS):
+    if _dc[_i].button(_lab, key=f"demo_{_i}", use_container_width=True):
+        st.session_state["pending_q"] = _q
+
 default_q = st.session_state.pop("pending_q", "")
 c_in, c_btn = st.columns([4, 1])
 with c_in:
@@ -459,6 +509,6 @@ else:
         "<div style='font-size:2rem'>🧠</div>"
         "<div style='font-weight:700;font-size:1.05rem;margin-top:8px'>输入问题，开始一次 Agent 编排</div>"
         "<div style='color:var(--muted);font-size:.86rem;margin-top:6px'>"
-        "从左侧选个示例，或直接提问 — 无需 API key 也能体验完整链路（离线 fallback）。</div></div>",
+        "点上方示例问题，或直接提问 — 无需 API key 也能体验完整链路（离线 fallback）。</div></div>",
         unsafe_allow_html=True,
     )
