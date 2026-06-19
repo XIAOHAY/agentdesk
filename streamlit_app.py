@@ -399,8 +399,13 @@ with c_btn:
 _autorun = st.session_state.pop("_autorun", False)
 # ============================ 运行与渲染 ============================
 if (go or _autorun) and query.strip():
-    with st.spinner("Agent 编排执行中：改写 → 检索 → 工具 → 生成 → 反思…"):
-        state = run_query(query.strip())
+    try:
+        with st.spinner("Agent 编排执行中：改写 → 检索 → 工具 → 生成 → 反思…"):
+            state = run_query(query.strip())
+    except Exception as _e:
+        st.error(f"运行出错（多为模型接口超时/报错）：{type(_e).__name__}: {_e}　"
+                 "可在上方换一个更稳的模型重试。")
+        st.stop()
 
     answer = state.get("answer", "")
     verify = state.get("verify", {}) or {}

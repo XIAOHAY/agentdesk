@@ -39,7 +39,8 @@ def _embed_raw(texts: List[str]) -> List[List[float]]:
         return [_hash_embedding(t) for t in texts]
     from openai import OpenAI
 
-    client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
+    client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url,
+                    timeout=30.0, max_retries=1)  # 防接口挂起导致前端无限转圈
     resp = client.embeddings.create(model=settings.embedding_model, input=texts)
     return [d.embedding for d in resp.data]
 
@@ -74,7 +75,8 @@ def chat(system: str, user: str) -> str:
         return "[offline] no OPENAI_API_KEY; stitched answer from evidence:\n\n" + user
     from openai import OpenAI
 
-    client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
+    client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url,
+                    timeout=30.0, max_retries=1)  # 防接口挂起导致前端无限转圈
     resp = client.chat.completions.create(
         model=settings.chat_model,
         messages=[

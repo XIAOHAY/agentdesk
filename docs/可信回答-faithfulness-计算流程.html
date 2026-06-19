@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>可信回答（faithfulness）计算流程</title>
+<style>
+  :root{
+    --bg:#ffffff; --ink:#2c2c2a; --muted:#5f5e5a; --line:#888780;
+    --box:#f1efe8; --box-bd:#b4b2a9;
+    --teal:#e1f5ee; --teal-bd:#1d9e75; --teal-ink:#04342c;
+    --amber:#faeeda; --amber-bd:#ba7517; --amber-ink:#412402;
+    --red:#fcebeb; --red-bd:#e24b4a; --red-ink:#501313;
+    --card:#faf9f5; --card-bd:#e4e2d8;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1f1e1c; --ink:#ecebe6; --muted:#a8a69d; --line:#7a7972;
+      --box:#2c2c2a; --box-bd:#4a4945;
+      --teal:#0f3a30; --teal-bd:#1d9e75; --teal-ink:#9fe1cb;
+      --amber:#3a2a0e; --amber-bd:#ba7517; --amber-ink:#fac775;
+      --red:#3a1414; --red-bd:#e24b4a; --red-ink:#f5b3b3;
+      --card:#262522; --card-bd:#3a3935;
+    }
+  }
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,"Segoe UI",Roboto,"Noto Sans SC","Microsoft YaHei",sans-serif;
+    line-height:1.7;padding:28px 22px 40px;}
+  .wrap{max-width:760px;margin:0 auto;}
+  h1{font-size:22px;font-weight:600;margin:0 0 4px;}
+  h2{font-size:16px;font-weight:600;margin:26px 0 8px;}
+  p,li{font-size:15px;color:var(--ink);}
+  .sub{color:var(--muted);font-size:14px;margin-top:0;}
+  .card{background:var(--card);border:1px solid var(--card-bd);border-radius:12px;padding:14px 16px;margin:14px 0;}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    background:rgba(125,125,125,.16);padding:1px 5px;border-radius:5px;font-size:13.5px;}
+  svg text{font-family:inherit;}
+  .t{fill:var(--ink);font-size:14px;}
+  .ts{fill:var(--muted);font-size:12px;}
+  .th{fill:var(--ink);font-size:14px;font-weight:600;}
+  .box{fill:var(--box);stroke:var(--box-bd);stroke-width:1;}
+  .pass{fill:var(--teal);stroke:var(--teal-bd);stroke-width:1;}
+  .pass-ink{fill:var(--teal-ink);font-size:14px;}
+  .warn{fill:var(--amber);stroke:var(--amber-bd);stroke-width:1;}
+  .warn-ink{fill:var(--amber-ink);font-size:14px;}
+  .l-red{fill:var(--red);stroke:var(--red-bd);stroke-width:1;}
+  .l-red-ink{fill:var(--red-ink);font-size:12px;}
+  .l-amber{fill:var(--amber);stroke:var(--amber-bd);stroke-width:1;}
+  .l-amber-ink{fill:var(--amber-ink);font-size:12px;}
+  .l-teal{fill:var(--teal);stroke:var(--teal-bd);stroke-width:1;}
+  .l-teal-ink{fill:var(--teal-ink);font-size:12px;}
+  .ln{stroke:var(--line);stroke-width:1.5;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>可信回答（faithfulness）是怎么算出来的</h1>
+  <p class="sub">面板里的环形百分比与「可信回答 / 证据支撑不足」的判定流程。逻辑取自 <code>app/graph/judge.py</code> 与 <code>streamlit_app.py</code>。</p>
+
+  <svg width="100%" viewBox="0 0 680 548" role="img" xmlns="http://www.w3.org/2000/svg">
+    <title>可信回答（faithfulness）分数的计算流程</title>
+    <desc>judge() 接收问题、答案、检索证据与工具结果；有真实模型且答案非空时走 LLM 裁判，否则或解析失败时走启发式兜底；score 与阈值 0.6 比较后决定可信回答；面板环形百分比 = round(score×100)，颜色按 0.4 与 0.6 分红黄绿。</desc>
+    <defs>
+      <marker id="ah" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--line)"/></marker>
+    </defs>
+
+    <text class="th" x="40" y="30" text-anchor="start">输入（judge 的参数）</text>
+    <rect class="box" x="48" y="42" width="128" height="48" rx="6"/><text class="t" x="112" y="64" text-anchor="middle">问题</text><text class="ts" x="112" y="81" text-anchor="middle">用户提问</text>
+    <rect class="box" x="192" y="42" width="128" height="48" rx="6"/><text class="t" x="256" y="64" text-anchor="middle">答案</text><text class="ts" x="256" y="81" text-anchor="middle">模型生成</text>
+    <rect class="box" x="336" y="42" width="128" height="48" rx="6"/><text class="t" x="400" y="64" text-anchor="middle">检索证据</text><text class="ts" x="400" y="81" text-anchor="middle">top-k chunk</text>
+    <rect class="box" x="480" y="42" width="128" height="48" rx="6"/><text class="t" x="544" y="64" text-anchor="middle">工具结果</text><text class="ts" x="544" y="81" text-anchor="middle">kb_stats 等</text>
+
+    <line class="ln" x1="340" y1="90" x2="340" y2="118" marker-end="url(#ah)"/>
+    <rect class="box" x="170" y="120" width="340" height="44" rx="6"/><text class="t" x="340" y="147" text-anchor="middle">judge()：有真实模型 且 答案非空？</text>
+
+    <line class="ln" x1="270" y1="164" x2="200" y2="202" marker-end="url(#ah)"/>
+    <line class="ln" x1="410" y1="164" x2="495" y2="202" marker-end="url(#ah)"/>
+    <text class="ts" x="214" y="186" text-anchor="middle">是</text>
+    <text class="ts" x="470" y="186" text-anchor="middle">否 / 解析失败</text>
+
+    <rect class="box" x="44" y="204" width="296" height="90" rx="6"/><text class="t" x="192" y="230" text-anchor="middle">LLM 裁判 · method = llm</text><text class="ts" x="192" y="252" text-anchor="middle">证据 ＋ 工具结果 喂给模型</text><text class="ts" x="192" y="270" text-anchor="middle">模型逐条核对，输出</text><text class="ts" x="192" y="286" text-anchor="middle">{ score, reason }</text>
+
+    <rect class="box" x="356" y="204" width="284" height="90" rx="6"/><text class="t" x="498" y="230" text-anchor="middle">启发式兜底 · method = heuristic</text><text class="ts" x="498" y="252" text-anchor="middle">词集重叠占比</text><text class="ts" x="498" y="272" text-anchor="middle">答案 ∩ ( 证据 ∪ 工具 )</text><text class="ts" x="498" y="288" text-anchor="middle">÷ 答案词数</text>
+
+    <line class="ln" x1="192" y1="294" x2="300" y2="330" marker-end="url(#ah)"/>
+    <line class="ln" x1="498" y1="294" x2="380" y2="330" marker-end="url(#ah)"/>
+    <rect class="box" x="240" y="332" width="200" height="48" rx="6"/><text class="t" x="340" y="354" text-anchor="middle">score ≥ 0.6 ?</text><text class="ts" x="340" y="371" text-anchor="middle">THRESHOLD = 0.6</text>
+
+    <line class="ln" x1="300" y1="380" x2="228" y2="416" marker-end="url(#ah)"/>
+    <line class="ln" x1="380" y1="380" x2="452" y2="416" marker-end="url(#ah)"/>
+    <text class="ts" x="226" y="402" text-anchor="middle">是</text>
+    <text class="ts" x="454" y="402" text-anchor="middle">否</text>
+
+    <rect class="pass" x="112" y="418" width="216" height="44" rx="6"/><text class="pass-ink" x="220" y="445" text-anchor="middle">✅ 可信回答（faithful）</text>
+    <rect class="warn" x="352" y="418" width="216" height="44" rx="6"/><text class="warn-ink" x="460" y="445" text-anchor="middle">⚠️ 证据支撑不足</text>
+
+    <text class="th" x="40" y="494" text-anchor="start">面板环形：百分比 = round( score × 100 )，颜色按区间</text>
+    <rect class="l-red" x="40" y="504" width="184" height="26" rx="4"/><text class="l-red-ink" x="132" y="521" text-anchor="middle">&lt; 0.4　红</text>
+    <rect class="l-amber" x="228" y="504" width="184" height="26" rx="4"/><text class="l-amber-ink" x="320" y="521" text-anchor="middle">0.4 – 0.6　黄</text>
+    <rect class="l-teal" x="416" y="504" width="200" height="26" rx="4"/><text class="l-teal-ink" x="516" y="521" text-anchor="middle">≥ 0.6　绿 = 可信</text>
+  </svg>
+
+  <h2>启发式兜底的公式</h2>
+  <div class="card">
+    <code>score = |分词(答案) ∩ 分词(证据 ∪ 工具结果)| / |分词(答案)|</code>
+    <p style="margin:.6rem 0 0">弱模型吐不出可解析 JSON 时退到这条。纯数字短答案天生偏低（虚词拉低分母），所以真正稳的是 LLM 裁判路径。</p>
+  </div>
+
+  <h2>走一遍："知识库里有多少个文档？"</h2>
+  <p>答案"知识库里有 24 个文档"是对的。走的是 LLM 裁判（<code>method=llm</code>）。</p>
+  <ul>
+    <li><strong>旧代码</strong>：只把 5 个检索 chunk 当证据，里面没有"24" → 模型判"24 无支撑" → <code>score≈0</code> → &lt; 0.6 → ⚠️ 证据支撑不足 → 环形 <code>round(0×100)=0%</code>、红色。</li>
+    <li><strong>修复后</strong>：<code>judge()</code> 多收"工具结果 = 文档总数=24"并声明为权威依据 → 模型看到 24 就在工具结果里 → 判 faithful → 绿色。</li>
+  </ul>
+
+  <h2>代码位置</h2>
+  <ul>
+    <li>分支选择与两种打分：<code>app/graph/judge.py</code> 的 <code>judge()</code> / <code>_heuristic()</code></li>
+    <li>阈值：<code>THRESHOLD = 0.6</code>（judge.py）</li>
+    <li>环形百分比与红/黄/绿取色：<code>streamlit_app.py</code>（<code>pct = round(score*100)</code>、<code>gc</code> 按 0.4 / 0.6 分档）</li>
+  </ul>
+</div>
+</body>
+</html>
