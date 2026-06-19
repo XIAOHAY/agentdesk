@@ -1,6 +1,7 @@
 """Faithfulness 评判：有 LLM 时用 LLM-as-judge 做事实核查打分，否则回退启发式。
 
-返回 {faithful, score, method, reason?}。score∈[0,1]，表示答案被证据支撑的程度。
+返回 {faithful, score, method, reason?, detail}。score∈[0,1]，表示答案被证据支撑的程度。
+detail 给前端展示"这次是怎么算的"（命中/答案词数、是否用到工具、证据条数）。
 LLM-judge 更接近 RAGAS 的 faithfulness 思路（拆 claim → 逐条验证），这里用一次性打分简化。
 """
 from __future__ import annotations
@@ -35,6 +36,8 @@ def judge(question: str, answer: str, evidence, tool_results=None) -> dict:
         r["out"]["result"] for r in (tool_results or [])
         if isinstance(r.get("out"), dict) and r["out"].get("ok") and r["out"].get("result")
     )
+    n_evidence = len(list(evidence))
+
     if settings.use_llm and answer.strip():
         ctx = "\n\n".join(f"[{e.chunk_id}] {e.text}" for e in evidence)
         if tool_text:
@@ -50,10 +53,21 @@ def judge(question: str, answer: str, evidence, tool_results=None) -> dict:
             raw = chat(system, user)
             m = re.search(r"\{.*\}", raw, re.S)
             obj = json.loads(m.group(0))
-            score = max(0.0, min(1.0, float(obj.get("score")))) 
+            score = max(0.0, min(1.0, float(obj.get("score"))))
             return {"faithful": score >= THRESHOLD, "score": round(score, 3),
-                    "reason": str(obj.get("reason", ""))[:200], "method": "llm"}
+                    "reason": str(obj.get("reason", ""))[:200], "method": "llm",
+                    "detail": {"used_tool": bool(tool_text), "n_evidence": n_evidence}}
         except Exception:
             pass  # 解析失败则回退启发式，保证健壮
-    score = _heuristic(answer, evidence, tool_text)
-    return {"faithful": score >= THRESHOLD, "score": round(score, 3), "method": "heuristic"}
+
+    # —— 启发式兜底：顺带产出推导明细供前端展示 ——
+    ans_set = set(tokenize(answer))
+    ev_set = set()
+    for e in evidence:
+        ev_set |= set(tokenize(e.text))
+    if tool_text:
+        ev_set |= set(tokenize(tool_text))
+    score = (len(ans_set & ev_set) / len(ans_set)) if ans_set else 0.0
+    return {"faithful": score >= THRESHOLD, "score": round(score, 3), "method": "heuristic",
+            "detail": {"n_answer": len(ans_set), "n_match": len(ans_set & ev_set),
+                       "used_tool": bool(tool_text), "n_evidence": n_evidence}}

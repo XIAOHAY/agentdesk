@@ -449,6 +449,47 @@ if (go or _autorun) and query.strip():
             unsafe_allow_html=True,
         )
 
+        # —— 可信度推导（这次怎么算的）：评判方式 / 依据 / 计算 / 阈值 + 标尺 ——
+        _method = verify.get("method", "-")
+        _detail = verify.get("detail", {}) or {}
+        _reason = str(verify.get("reason", "") or "")
+        _used_tool = _detail.get(
+            "used_tool", any((r.get("out", {}) or {}).get("ok") for r in tool_results))
+        if _method == "heuristic":
+            _nm, _na = _detail.get("n_match", "?"), _detail.get("n_answer", "?")
+            _calc = (f"启发式：命中词 <b>{_nm}</b> ÷ 答案词 <b>{_na}</b> = <b>{score:.2f}</b>"
+                     "　<span style='color:var(--faint)'>score = |答案∩(证据∪工具)| / |答案|</span>")
+        elif _method == "llm":
+            _calc = (f"LLM 裁判逐条核对 → <b>{score:.2f}</b>"
+                     + (f"<br><span style='color:var(--faint)'>裁判说明：{esc(_reason)}</span>"
+                        if _reason else ""))
+        else:
+            _calc = f"score = <b>{score:.2f}</b>"
+        _verdict = ("✅ score ≥ 0.6 → 可信回答" if faithful
+                    else "⚠️ score &lt; 0.6 → 证据支撑不足")
+        _ruler = (
+            "<div style='position:relative;height:24px;margin-top:10px'>"
+            "<div style='position:absolute;top:7px;left:0;right:0;height:10px;border-radius:5px;"
+            "background:linear-gradient(90deg,#fb7185 0 40%,#fbbf24 40% 60%,#34d399 60% 100%)'></div>"
+            "<div style='position:absolute;top:3px;left:60%;width:2px;height:18px;background:#e9edff;opacity:.85'></div>"
+            f"<div style='position:absolute;top:4px;left:{pct}%;transform:translateX(-50%);width:14px;height:14px;"
+            f"border-radius:50%;background:{gc};border:2px solid #0a0e1a;box-shadow:0 0 8px {gc}'></div></div>"
+            "<div style='position:relative;height:14px;font-size:.64rem;color:var(--faint)'>"
+            "<span style='position:absolute;left:0'>0.0</span>"
+            "<span style='position:absolute;left:60%;transform:translateX(-50%)'>0.6 阈值</span>"
+            "<span style='position:absolute;right:0'>1.0</span></div>"
+        )
+        st.markdown(
+            "<div class='eyebrow' style='margin-top:6px'>可信度推导 · 这次怎么算的</div>"
+            "<div class='card'><div style='font-size:.82rem;color:#c3cbe6;line-height:1.95'>"
+            f"① 评判方式：<b>{'LLM 裁判' if _method=='llm' else ('启发式兜底' if _method=='heuristic' else esc(_method))}</b><br>"
+            f"② 依据：检索证据 <b>{len(evidence)}</b> 条 · 工具结果 <b>{'有' if _used_tool else '无'}</b><br>"
+            f"③ 计算：{_calc}<br>"
+            f"④ 阈值判定：{_verdict}</div>"
+            f"{_ruler}</div>",
+            unsafe_allow_html=True,
+        )
+
         if cites:
             st.markdown("<div class='eyebrow'>Citations</div>", unsafe_allow_html=True)
             st.markdown("".join(f"<span class='pill'>🔖 {esc(c)}</span>" for c in cites),
