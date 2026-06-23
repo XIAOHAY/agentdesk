@@ -18,6 +18,8 @@ _WEB = os.path.join(os.path.dirname(__file__), "..", "web", "index.html")
 
 class ChatRequest(BaseModel):
     query: str
+    user_id: str = "anonymous"
+    session_id: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -28,6 +30,8 @@ class ChatResponse(BaseModel):
     verify: dict
     iterations: int
     trace: list
+    recalled_memories: list
+    memory_writes: list
 
 
 @app.get("/")
@@ -42,7 +46,7 @@ def health() -> dict:
 
 @app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(req: ChatRequest) -> ChatResponse:
-    s = run_query(req.query)
+    s = run_query(req.query, user_id=req.user_id, session_id=req.session_id)
     ev = [asdict(e) if hasattr(e, "__dataclass_fields__") else e for e in s.get("evidence", [])]
     ev_view = [{"chunk_id": e["chunk_id"], "doc_id": e["doc_id"],
                 "score": round(e["score"], 4), "text": e["text"][:200]} for e in ev]
@@ -54,4 +58,6 @@ def chat_endpoint(req: ChatRequest) -> ChatResponse:
         verify=s.get("verify", {}),
         iterations=s.get("iterations", 0),
         trace=s.get("trace", []),
+        recalled_memories=s.get("recalled_memories", []),
+        memory_writes=s.get("memory_writes", []),
     )

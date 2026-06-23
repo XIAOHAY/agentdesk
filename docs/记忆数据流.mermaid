@@ -1,0 +1,34 @@
+%% AgentDesk 记忆层（Memory Layer）数据流：在原编排链路首尾插入 3 个记忆节点
+flowchart TD
+    U([用户提问 POST /chat<br/>query + user_id + session_id]) --> API["app/api/main.py<br/>FastAPI 接收"]
+    API --> RUN["app/graph/build_graph.py<br/>run_query 启动编排"]
+
+    RUN --> MR["memory_retrieve_node<br/>① 加载短期 WorkingMemory(summary+近K轮)<br/>② 召回长期记忆(按 user namespace)"]
+    MR --> P["planner_node 查询改写"]
+    P --> R["retrieval_node 混合检索+Rerank"]
+    R --> T["tool_node 轻量工具路由"]
+    T --> W["writer_node 生成答案<br/>注入【参考资料】+【关于该用户已知信息】"]
+    W --> C["critic_node faithfulness 核查"]
+
+    C --> Q{should_retry<br/>答案被证据支撑?}
+    Q -->|不达标 且 仍可重试| R
+    Q -->|达标 / 已达 max_iterations| MW["memory_write_node<br/>① 抽取用户偏好/事实<br/>② evolution 去重/冲突/淘汰<br/>③ append 本轮 → 持久化 WorkingMemory"]
+
+    MW --> SQ{need_summarize<br/>round_count > N ?}
+    SQ -->|是| SUM["summarize_node<br/>压缩旧轮次为滚动 summary"]
+    SQ -->|否| END([返回 answer + 引用 + recalled_memories + trace])
+    SUM --> END
+
+    %% 存储层
+    MR -. 读 .-> STM[("短期: Redis wm:{session_id}<br/>连不上→进程内 dict")]
+    MW -. 写 .-> STM
+    MR -. 召回 .-> LTM[("长期/演化: Qdrant<br/>collection=agentdesk_memory<br/>payload 过滤 user_id<br/>连不上→内存 MemoryStore")]
+    MW -. upsert/淘汰 .-> LTM
+
+    %% 演化机制（作用于 memory_write 写入时）
+    MW --> EVO["evolution.resolve_write<br/>sim≥0.92 去重(更新)<br/>0.80≤sim<0.92 同类事实 冲突覆盖(留审计 version/superseded_by)<br/>event TTL + 容量 LRU 淘汰"]
+    EVO -. 决策 .-> LTM
+
+    %% 兜底
+    RUN -.->|langgraph 装不上时| SEQ["_run_sequential<br/>等价顺序：memory_retrieve→…→memory_write→summarize?"]
+    SEQ -.-> MR

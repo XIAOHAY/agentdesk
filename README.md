@@ -1,126 +1,141 @@
-# AgentDesk · 企业级 Agentic RAG + 多智能体系统
+# AgentDesk · Agentic RAG + 分层记忆 + 评测闭环
 
-第 1 周里程碑脚手架：**LangGraph 编排 + FastAPI + 朴素 RAG**，已可端到端运行。
-无需 API key 也能跑（自动走离线 fallback：哈希向量 + 拼接式回答），方便先验证骨架。
+> 一个可复现的**企业知识问答 Agent 原型**：把 _记忆 → 检索 → 工具调用 → 带证据生成 → 反思重试 → 质量评测_ 串成一条可观测、可量化、可回归的闭环。
 
-## 目录
+<p>
+<img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
+<img alt="LangGraph" src="https://img.shields.io/badge/Orchestration-LangGraph-7c5cff">
+<img alt="FastAPI" src="https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white">
+<img alt="Qdrant" src="https://img.shields.io/badge/Vector-Qdrant-dc244c">
+<img alt="License" src="https://img.shields.io/badge/License-MIT-green">
+<img alt="No API key needed" src="https://img.shields.io/badge/run-offline%20fallback-fbbf24">
+</p>
+
+**无需任何 API key 也能端到端运行**（自动走离线 fallback：哈希向量 + 拼接式回答）；Qdrant / Redis / 大模型 key 任一不可用都会自动回退内存/离线实现，本地零外部依赖即可演示完整链路。
+
+---
+
+## ✨ 核心特性
+
+- **Agentic 编排（LangGraph）**：`memory_retrieve → planner → retrieval → tool → writer → critic →(重试)→ memory_write →(summarize)`，每个节点可观测；LangGraph 不可用时退化为等价顺序执行。
+- **分层记忆（Memory Layer）**：短期工作记忆（对话 buffer + 滚动摘要）、长期记忆（偏好/事实抽取 → 向量化 → Qdrant 按 `user_id` namespace 隔离 → 检索注入）、记忆演化（写入去重 / 冲突覆盖留审计痕迹 / TTL+LRU 淘汰）。
+- **混合检索 + 重排**：多查询改写 → 向量 + BM25 → RRF 融合 → Rerank。
+- **可信回答与反思循环**：faithfulness 评估（有 key 用 LLM-as-judge，无 key 回退启发式），答案未被证据/工具支撑且未超迭代上限时自动回到检索重试；writer 出口净化无效/幻觉引用。
+- **MCP 风格工具层**：`list_tools / call_tool` 契约 + 工具名/参数 schema 校验 + 输出截断；calculator 用 AST 白名单阻断注入。
+- **评测闭环**：检索 `hit@k / MRR` + 记忆 `memory hit@k`，量化“检索好不好、记忆有没有被想起”。
+- **全程可观测**：执行 trace 实时可视化，并落盘 `eval/reports/traces.jsonl` 供事后复盘。
+
+---
+
+## 🏗️ 架构
+
+```
+                        ┌──────────── LangGraph 编排 ────────────┐
+ /chat (query,          │ memory_retrieve → planner → retrieval  │
+  user_id, session_id)  │      → tool → writer → critic          │
+        │               │            │(不达标且未超限则重试)        │
+        ▼               │            └──► memory_write →(summarize)│
+   FastAPI / Streamlit  └────────────────────────────────────────┘
+        │                         │                    │
+   实时 trace 可视化         Qdrant(知识库 + 记忆)      Redis(缓存 + 短期记忆)
+                                  └─ 不可用→内存         └─ 不可用→内存
+```
+
+- 详细数据流见 [`docs/数据流与可观测.mermaid`](docs/数据流与可观测.mermaid)
+- 记忆层设计见 [`docs/记忆层设计文档.md`](docs/记忆层设计文档.md) 与 [`docs/记忆数据流.mermaid`](docs/记忆数据流.mermaid)
+
+---
+
+## 🚀 快速开始
+
+```bash
+pip install -r requirements.txt
+
+# （可选）配置真实模型；不配置则用离线 fallback
+cp .env.example .env          # 填 OPENAI_API_KEY（或硅基流动/百炼等兼容厂商）
+
+python -m scripts.build_index # 建索引
+uvicorn app.api.main:app --reload
+```
+
+- Web 聊天界面：<http://localhost:8000/> · 交互式 API 文档：<http://localhost:8000/docs>
+- 可视化仪表盘（推荐演示）：`streamlit run streamlit_app.py` —— 答案 + faithfulness 仪表盘 + 引用/证据 + 工具调用 + **对话历史 & 记忆面板 & 演化审计** + 执行链时间线。
+- 一键全栈：`docker compose up --build`（api + qdrant + redis，均带回退）。
+
+```bash
+# 跨轮记忆演示（同一 user + session）
+curl -s localhost:8000/chat -H 'Content-Type: application/json' \
+  -d '{"query":"我是法务，只看2024年的合规条款","user_id":"alice","session_id":"s1"}'
+curl -s localhost:8000/chat -H 'Content-Type: application/json' \
+  -d '{"query":"这份合同我该重点看什么？","user_id":"alice","session_id":"s1"}'   # 第二轮会召回上面的记忆
+```
+
+---
+
+## 🧠 分层记忆
+
+| 层 | 做什么 | 存储 | 文件 |
+|---|---|---|---|
+| 短期工作记忆 | 对话 buffer + 滚动 summary 压缩（保留近 K 轮 + running_summary），控制长对话上下文膨胀 | Redis / 内存 | `app/memory/short_term.py` |
+| 长期记忆 | 抽取用户偏好/事实 → 向量化 → Qdrant 按 `user_id` namespace 隔离 → 检索注入 | Qdrant / 内存 | `app/memory/long_term.py` |
+| 记忆演化 | 写入去重（相似度阈值）、冲突更新（新值覆盖、旧值留 `version/superseded_by` 审计）、过期淘汰（event TTL + 容量 LRU） | — | `app/memory/evolution.py` |
+
+入口/出口以 `memory_retrieve / memory_write / summarize` 三节点无侵入接入既有编排；阈值与开关见 `.env.example` 的 `MEM_*`。
+
+---
+
+## 📊 评测
+
+```bash
+python -m eval.run_eval            # 检索：vector / hybrid / hybrid+rerank 的 hit@k 与 MRR
+python -m eval.run_memory_eval 5   # 记忆：memory hit@1/3/5 → eval/reports/memory_latest.json
+python -m eval.run_faithfulness 8  # 生成侧：平均 faithfulness 与通过率
+```
+
+> 当前示例语料较小且离线 embedding 已接近天花板，hit@k 提升幅度有限；评测框架已就绪，换真实 embedding + 更大语料后混合检索与 Rerank 的提升会明显——这正是简历中 "X% → Y%" 的数据来源。
+
+---
+
+## 🔍 可观测
+
+- 每个节点统一往 `trace` 追加结构化记录（改写 / 检索命中 / 工具调用 / faithfulness 分数 / 记忆读写），前端时间线实时渲染。
+- 每轮执行链落盘 `eval/reports/traces.jsonl`（一行一条 JSON，便于 grep/回放）；`TRACE_LOG=0` 可关。
+
+---
+
+## 📁 目录
+
 ```
 agentdesk/
 ├── app/
-│   ├── config.py          # 配置（.env）
-│   ├── llm.py             # Embedding/Chat 封装（含离线 fallback）
-│   ├── rag/               # store / indexer / retriever
-│   ├── graph/             # LangGraph: state / nodes / build_graph
-│   └── api/main.py        # FastAPI: /chat /health
-├── scripts/build_index.py # 建索引
-├── data/docs/             # 示例文档
-├── requirements.txt
-├── Dockerfile
-└── README.md
+│   ├── config.py            # 配置（.env / 环境变量，全部带默认值）
+│   ├── llm.py               # Embedding/Chat 封装（含离线 fallback + 缓存）
+│   ├── rag/                 # store / indexer / retriever / bm25 / rerank / qdrant / cache
+│   ├── memory/              # 分层记忆：schema / store / short_term / long_term / evolution
+│   ├── graph/               # LangGraph: state / nodes / build_graph / judge / trace_log
+│   ├── tools/               # MCP 风格工具层 + 内置工具 + stdio MCP server/client
+│   └── api/main.py          # FastAPI: / · /chat · /health
+├── eval/                    # 检索 hit@k/MRR · memory hit@k · faithfulness
+├── scripts/                 # build_index / gen_corpus / demo / mcp_demo
+├── docs/                    # 架构图 / 记忆层设计 / 数据流 mermaid
+├── streamlit_app.py         # 可视化控制台
+├── docker-compose.yml · Dockerfile · requirements.txt
 ```
 
-## 快速开始
-```bash
-# 1. 安装依赖
-pip install -r requirements.txt
+---
 
-# 2.（可选）配置真实模型；不配置则用离线 fallback
-cp .env.example .env   # 填 OPENAI_API_KEY
+## 🗺️ 里程碑
 
-# 3. 建索引
-python -m scripts.build_index
+- [x] 朴素 RAG + FastAPI + LangGraph 编排
+- [x] 查询改写 + 混合检索(向量+BM25, RRF) + Rerank + eval(hit@k/MRR)
+- [x] tool 节点 + Critic 反思节点 + faithfulness 重试循环
+- [x] MCP 风格工具层 + JSON-RPC over stdio MCP server + 安全计算器
+- [x] Qdrant 向量库 + Redis 缓存 + docker-compose（均带回退）
+- [x] LLM-judge faithfulness + 生成侧评测
+- [x] **分层记忆（短期/长期/演化）+ memory hit@k + 引用净化 + trace 落盘**
 
-# 4. 启动服务
-uvicorn app.api.main:app --reload
+---
 
-# 5. 测试
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"query":"公司A和公司B 2025年营收分别是多少？"}'
-```
+## License
 
-打开 **http://localhost:8000/** 是内置的 Web 聊天界面（输入框 + 答案 + 引用/证据/执行链展示）。
-打开 http://localhost:8000/docs 可看交互式 API 文档。
-
-## Streamlit 可视化仪表盘
-除 FastAPI 外，另提供一个**演示级可视化界面**（进程内直接调用 `run_query`，无需起 API）：
-```bash
-pip install -r requirements.txt
-streamlit run streamlit_app.py
-```
-界面把全流程可视化：答案 + faithfulness 仪表盘 + 引用 + 证据卡片(带 score 条) + 工具调用 +
-执行链 Trace 时间线 + 侧边栏配置/架构。无 `OPENAI_API_KEY` 也能跑（离线 fallback）。
-
-### 部署到 Streamlit Community Cloud（免费）
-1. 代码推到 GitHub（public 仓库最省事）。
-2. 打开 https://share.streamlit.io → **New app** → 选本仓库。
-3. **Main file path** 填 `agentdesk/streamlit_app.py`（若仓库根就是 agentdesk，则填 `streamlit_app.py`）。
-4. （可选）**Advanced settings → Secrets** 粘贴 `.streamlit/secrets.toml.example` 的内容并填真实 key，启用真实大模型；不填则用离线 fallback。
-5. Deploy。首次启动会自动构建知识库索引（`data/index/` 不入库，运行时重建）。
-
-> 内置语料生成器：`python -m scripts.gen_corpus` 会生成 20 篇相似主题文档 + 配套评测集，
-> 专门设计成能体现混合检索优势（型号/数字精确匹配靠 BM25，语义改写靠向量）。
-
-## 评测（量化检索提升）
-```bash
-python -m eval.run_eval
-```
-对比三种配置的 hit@k / MRR：`vector`（朴素向量）→ `hybrid`（向量+BM25 RRF 融合）→ `hybrid+rerank`。
-评测在 doc 级别标注（`eval/dataset.jsonl`），对 chunk 切分鲁棒。
-
-生成侧评测（faithfulness）：`python -m eval.run_faithfulness 8` —— 跑样本问题统计平均
-faithfulness 与通过率；有 key 时 critic 用 **LLM-as-judge** 做事实核查，无 key 回退启发式。
-
-> 注：离线 fallback 用哈希向量，且示例语料仅 4 篇、主题区分度高，朴素向量已接近天花板，
-> 提升幅度看起来很小。**换成真实 embedding + 更大语料**后，混合检索与 Rerank 的提升会明显，
-> 这才是简历里 “X% → Y%” 的真实数据来源。eval 框架本身已就绪、可直接复用。
-
-## 工具层与反思（第3周）
-- `app/tools/registry.py`：MCP 风格本地工具层。`list_tools()` 发现、`call_tool(name,args)` 调用，内置四道可靠性闸门——工具名校验、参数 schema 校验、输出截断、统一错误处理。后续把 `call_tool` 接到真正的 MCP Server（Stdio/HTTP）即可，契约不变。
-- `app/tools/builtins.py`：`calculator`（AST 白名单，拒绝 `__import__` 等注入）、`kb_stats`。
-- `critic_node`：判定答案对证据的 faithfulness，不达标且未超 `max_iterations` 则回 `retrieval` 重试（条件边 `should_retry`），有 LLM 时换 LLM-as-judge。
-
-试一下：
-```bash
-curl -s localhost:8000/chat -H 'Content-Type: application/json' -d '{"query":"(210-205)/205*100"}'   # 触发 calculator
-curl -s localhost:8000/chat -H 'Content-Type: application/json' -d '{"query":"知识库里有多少个文档？"}'  # 触发 kb_stats
-```
-
-## MCP 服务端（真实传输）
-- `app/tools/mcp_server.py`：纯标准库实现的 **JSON-RPC 2.0 over stdio** MCP 服务端，方法 `initialize / tools/list / tools/call`，复用工具 registry。可换成官方 `mcp` SDK，契约一致。
-- `app/tools/mcp_client.py`：spawn 服务端子进程，完成 initialize 握手并调用工具。
-- `app/tools/dispatch.py`：`USE_MCP=1` 时工具调用走真实 MCP 子进程（返回 `via:"mcp"`），否则进程内 registry（`via:"local"`）。graph 无感知。
-
-演示真实传输：
-```bash
-python -m scripts.mcp_demo          # 握手 + tools/list + tools/call + 错误回传
-USE_MCP=1 uvicorn app.api.main:app  # 让 /chat 的工具调用经 MCP stdio
-```
-
-## 真实向量库与缓存（第5周）
-- `app/rag/qdrant_store.py`：Qdrant 适配器，与内存版 `VectorStore` 同接口（add/search/chunks…），可直接替换。
-- `app/rag/store_factory.py`：按 `VECTOR_BACKEND` 选 `memory`/`qdrant`；**Qdrant 不可用时自动回退内存**，任何环境可跑。
-- `app/rag/cache.py`：embedding 缓存，优先 Redis（`REDIS_URL`），不可用时进程内 dict 回退，降低重复检索的计算/API 开销。
-- `docker-compose.yml`：一键起 `api + qdrant + redis`，api 启动前自动建索引。
-
-一键起完整栈：
-```bash
-docker compose up --build       # qdrant + redis + api，全部接好
-# 本地开发默认内存库 + 内存缓存，零外部依赖也能跑
-```
-
-## 当前进度（对照技术设计文档里程碑）
-- [x] 第1周：朴素 RAG + FastAPI + LangGraph 三节点编排
-- [x] 第2周：查询改写(multi-query) + 混合检索(向量+BM25, RRF) + Rerank + eval(hit@k/MRR)
-- [x] 第3周：tool 节点 + Critic 反思节点 + faithfulness 重试循环（max_iterations 限制）
-- [x] 第4周(部分)：MCP 风格工具层（工具名/参数校验、输出截断、错误处理）、安全计算器(AST 白名单)、prompt injection 分离
-- [x] 第4周(余)：真正的 MCP Server —— JSON-RPC 2.0 over stdio（initialize/tools/list/tools/call）+ 客户端握手，USE_MCP=1 切换
-- [x] 第5周(部分)：Qdrant 向量库适配器 + Redis embedding 缓存 + docker-compose(api+qdrant+redis)，均带回退
-- [x] 第5周(余)：LLM-judge faithfulness（有 key 走事实核查打分，无则回退启发式）+ 生成侧评测脚本
-- [x] 第6周：架构图(docs/architecture.svg) + Demo(scripts/demo.py) + 简历/面试要点定稿
-
-## 扩展点（代码里已留 TODO）
-- `graph/nodes.py::planner_node` → 加查询改写。
-- `rag/retriever.py` → 加混合检索 + Rerank。
-- `graph/build_graph.py` → 加 tool/critic 节点与条件边。
-- `rag/store.py` → 替换为 Qdrant/PGVector（保持 add/search 接口）。
+[MIT](LICENSE)

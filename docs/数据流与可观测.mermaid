@@ -1,0 +1,36 @@
+%% AgentDesk 一次 /chat 的数据流：AgentState 字段在各节点的读/写 + Critic 自检重试 + trace 留痕
+%% carrier = 单一共享状态 AgentState（TypedDict）；每个节点"读它需要的、写它负责的"，框架合并增量
+flowchart TD
+    INIT["run_query 初始化<br/>state = {query, user_id, session_id, trace:[], iterations:0}"]
+
+    INIT --> MR["memory_retrieve<br/>读 user_id/session_id/query<br/>写 working_memory, recalled_memories<br/>+trace"]
+    MR --> P["planner<br/>读 query<br/>写 queries(多条改写), plan<br/>+trace"]
+    P --> R["retrieval<br/>读 queries<br/>写 evidence, iterations+1<br/>+trace(mode/hits)"]
+    R --> T["tool<br/>读 query<br/>写 tool_results<br/>+trace(called)"]
+    T --> W["writer<br/>读 evidence/tool_results/recalled_memories/working_memory<br/>写 answer, citations（出口净化无效引用）<br/>+trace(citations)"]
+    W --> C["critic = judge()<br/>读 answer/evidence/tool_results<br/>写 verify{faithful,score,method}<br/>+trace(score)"]
+
+    C --> Q{should_retry<br/>读 verify/iterations}
+    Q -->|不忠实 且 iter < max| R
+    Q -->|忠实 或 iter ≥ max| MW["memory_write<br/>抽取→演化写长期记忆 / 追加短期<br/>写 memory_writes, working_memory<br/>+trace(wrote)"]
+
+    MW --> SQ{need_summarize_edge}
+    SQ -->|round 超阈值| SUM["summarize<br/>压缩旧轮次→running_summary<br/>+trace(summary_len)"]
+    SQ -->|否| OUT
+    SUM --> OUT["返回完整 state<br/>answer + citations + verify + recalled/writes + trace"]
+
+    %% ===== Critic 自我核查细节 =====
+    C -.详解.-> JUDGE["judge(): faithfulness 评分（阈值 0.6）<br/>① 有 key → LLM-as-judge：问题+答案+证据(+工具结果)<br/>→ 严格事实核查 → JSON{score,reason}<br/>② 无 key → 启发式：|答案词∩证据词| / |答案词|<br/>※ 工具结果(kb_stats/calculator)也算证据，避免误判重试"]
+
+    %% ===== 可观测：trace 留痕约定 =====
+    TRACE["trace 可观测约定：每个节点都执行<br/>trace = state.get('trace',[]) + [{node, 关键字段}]<br/>→ 读旧trace+追加自己，顺序保留、互不覆盖<br/>→ 重试时节点再追加一条（故可见 retrieval×N）<br/>→ /chat 与 Streamlit 时间线直接渲染 trace<br/>注：trace 仅在内存/响应中，当前不落盘"]
+    MR -.写入.-> TRACE
+    C -.写入.-> TRACE
+    MW -.写入.-> TRACE
+
+    classDef mem fill:#2a1f4d,stroke:#7c5cff,color:#e9e4ff;
+    classDef judge fill:#1f3a4d,stroke:#22d3ee,color:#d8f6ff;
+    classDef obs fill:#3a2030,stroke:#f472b6,color:#ffe4f0;
+    class MR,MW,SUM mem;
+    class JUDGE judge;
+    class TRACE obs;

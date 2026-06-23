@@ -5,3 +5,6 @@ __pycache__/
 data/index/
 .streamlit/secrets.toml
 .DS_Store
+
+# 运行时执行链落盘（不入库）
+eval/reports/traces.jsonl

@@ -1,0 +1,10 @@
+{"user_id": "u_mem_1", "seed": ["我是法务，只关注合规相关条款"], "query": "这份合同我该重点看什么？", "expect_mem": "合规"}
+{"user_id": "u_mem_2", "seed": ["我只看 2024 年的财报数据"], "query": "营收增长情况怎么样？", "expect_mem": "2024"}
+{"user_id": "u_mem_3", "seed": ["记住我的服务器在华东2可用区"], "query": "帮我排查下延迟问题", "expect_mem": "华东2"}
+{"user_id": "u_mem_4", "seed": ["我偏好用 Python 写脚本"], "query": "给我一段批量改名的脚本", "expect_mem": "Python"}
+{"user_id": "u_mem_5", "seed": ["我来自上海分公司"], "query": "本地有什么政策优惠？", "expect_mem": "上海"}
+{"user_id": "u_mem_6", "seed": ["我是新手，请用通俗的话解释"], "query": "什么是向量数据库？", "expect_mem": "新手"}
+{"user_id": "u_mem_7", "seed": ["以后都用人民币结算"], "query": "这笔订单总价多少？", "expect_mem": "人民币"}
+{"user_id": "u_mem_8", "seed": ["我只关注企业版功能"], "query": "有哪些权限管理能力？", "expect_mem": "企业版"}
+{"user_id": "u_mem_9", "seed": ["记住我对花生过敏"], "query": "推荐几道适合我的菜", "expect_mem": "花生"}
+{"user_id": "u_mem_10", "seed": ["我的项目部署在 Kubernetes 上"], "query": "怎么做灰度发布？", "expect_mem": "Kubernetes"}

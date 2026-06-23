@@ -34,6 +34,16 @@ try:
         qdrant_url: str = "http://localhost:6333"
         qdrant_collection: str = "agentdesk"
         redis_url: str = ""
+        mem_enabled: bool = True
+        mem_collection: str = "agentdesk_memory"
+        mem_short_window_k: int = 2
+        mem_summarize_every_n: int = 3
+        mem_long_top_k: int = 3
+        mem_dedup_threshold: float = 0.92
+        mem_conflict_threshold: float = 0.80
+        mem_event_ttl_days: int = 30
+        mem_max_per_user: int = 500
+        trace_log: bool = True
 
         @property
         def use_llm(self) -> bool:
@@ -58,6 +68,16 @@ except ImportError:
         qdrant_url = os.environ.get("QDRANT_URL", "http://localhost:6333")
         qdrant_collection = os.environ.get("QDRANT_COLLECTION", "agentdesk")
         redis_url = os.environ.get("REDIS_URL", "")
+        mem_enabled = os.environ.get("MEM_ENABLED", "1").strip() not in ("0", "false", "False")
+        mem_collection = os.environ.get("MEM_COLLECTION", "agentdesk_memory")
+        mem_short_window_k = int(os.environ.get("MEM_SHORT_WINDOW_K", "2"))
+        mem_summarize_every_n = int(os.environ.get("MEM_SUMMARIZE_EVERY_N", "3"))
+        mem_long_top_k = int(os.environ.get("MEM_LONG_TOP_K", "3"))
+        mem_dedup_threshold = float(os.environ.get("MEM_DEDUP_THRESHOLD", "0.92"))
+        mem_conflict_threshold = float(os.environ.get("MEM_CONFLICT_THRESHOLD", "0.80"))
+        mem_event_ttl_days = int(os.environ.get("MEM_EVENT_TTL_DAYS", "30"))
+        mem_max_per_user = int(os.environ.get("MEM_MAX_PER_USER", "500"))
+        trace_log = os.environ.get("TRACE_LOG", "1").strip() not in ("0", "false", "False")
 
         @property
         def use_llm(self) -> bool:

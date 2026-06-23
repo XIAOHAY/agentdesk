@@ -253,11 +253,20 @@ def ensure_index() -> int:
 n_chunks = ensure_index()
 
 NODE_LABELS = {
+    "memory_retrieve": ("Memory · Retrieve", "加载短期上下文 + 召回长期记忆"),
     "planner": ("Planner", "查询改写 · multi-query"),
     "retrieval": ("Retrieval", "向量 + BM25 → RRF → Rerank"),
     "tool": ("Tool", "MCP 工具路由"),
     "writer": ("Writer", "带证据生成 · 标注引用"),
     "critic": ("Critic", "faithfulness 反思判定"),
+    "memory_write": ("Memory · Write", "抽取演化写入 + 追加短期记忆"),
+    "summarize": ("Memory · Summarize", "滚动摘要压缩旧轮次"),
+}
+# 记忆类型 → (图标, 中文, 颜色)。主区记忆卡片 / 侧栏演化审计共用。
+MEM_KIND = {
+    "preference": ("⭐", "偏好", "#7c5cff"),
+    "fact": ("📌", "事实", "#22d3ee"),
+    "event": ("🕒", "事件", "#f472b6"),
 }
 SAMPLES = [
     "公司A和公司B 2025年营收分别是多少？",
@@ -302,6 +311,22 @@ with st.sidebar:
         f"<div style='font-weight:700;margin-top:3px'>{esc(n_chunks)}</div></div></div>",
         unsafe_allow_html=True,
     )
+    st.markdown("<div class='eyebrow' style='margin-top:18px'>记忆身份</div>", unsafe_allow_html=True)
+    import uuid as _uuid
+    if "mem_sid" not in st.session_state:
+        st.session_state["mem_sid"] = _uuid.uuid4().hex
+    st.text_input("user_id", value=st.session_state.get("mem_uid", "alice"),
+                  key="mem_uid", label_visibility="collapsed", placeholder="user_id（记忆按此隔离）")
+    _sid = st.session_state["mem_sid"]
+    sc1, sc2 = st.columns([3, 2])
+    with sc1:
+        st.markdown(f"<div style='color:var(--faint);font-size:.72rem;padding-top:8px'>"
+                    f"会话 {esc(_sid[:8])}…</div>", unsafe_allow_html=True)
+    with sc2:
+        if st.button("新会话", use_container_width=True, key="new_sess"):
+            st.session_state["mem_sid"] = _uuid.uuid4().hex
+            st.rerun()
+
     st.markdown("<div class='eyebrow' style='margin-top:18px'>试一试</div>", unsafe_allow_html=True)
     for q in SAMPLES:
         if st.button(q, use_container_width=True, key=f"s_{q}"):
@@ -400,8 +425,12 @@ _autorun = st.session_state.pop("_autorun", False)
 # ============================ 运行与渲染 ============================
 if (go or _autorun) and query.strip():
     try:
-        with st.spinner("Agent 编排执行中：改写 → 检索 → 工具 → 生成 → 反思…"):
-            state = run_query(query.strip())
+        with st.spinner("Agent 编排执行中：记忆召回 → 改写 → 检索 → 工具 → 生成 → 反思 → 记忆写入…"):
+            state = run_query(
+                query.strip(),
+                user_id=(st.session_state.get("mem_uid") or "alice").strip(),
+                session_id=st.session_state.get("mem_sid"),
+            )
     except Exception as _e:
         st.error(f"运行出错（多为模型接口超时/报错）：{type(_e).__name__}: {_e}　"
                  "可在上方换一个更稳的模型重试。")
@@ -414,6 +443,8 @@ if (go or _autorun) and query.strip():
     tool_results = state.get("tool_results", []) or []
     trace = state.get("trace", []) or []
     cites = state.get("citations", []) or []
+    recalled = state.get("recalled_memories", []) or []
+    mem_writes = state.get("memory_writes", []) or []
 
     score = float(verify.get("score", 0) or 0)
     faithful = bool(verify.get("faithful"))
@@ -434,6 +465,35 @@ if (go or _autorun) and query.strip():
             f"<div class='k-val'>{esc(val)}</div><div class='k-sub'>{esc(sub)}</div></div>",
             unsafe_allow_html=True,
         )
+
+    # —— 对话历史（短期记忆 buffer，体现多轮）——
+    _wm = state.get("working_memory") or {}
+    _msgs = _wm.get("messages", []) or []
+    _summary = _wm.get("running_summary", "")
+    if _msgs or _summary:
+        st.markdown("<div class='eyebrow'>对话历史 · 本会话短期记忆</div>", unsafe_allow_html=True)
+        bubbles = ""
+        if _summary:
+            bubbles += (f"<div style='border-left:3px solid var(--brand);padding:8px 12px;margin-bottom:8px;"
+                        f"background:rgba(124,92,255,.08);border-radius:8px'>"
+                        f"<div style='color:var(--faint);font-size:.72rem;margin-bottom:3px'>🗜️ 滚动摘要（已压缩的旧轮次）</div>"
+                        f"<div style='color:#c3cbe6;font-size:.84rem;line-height:1.5'>{esc(_summary)}</div></div>")
+        for m in _msgs:
+            is_user = m.get("role") == "user"
+            who = "🧑 用户" if is_user else "🤖 助手"
+            align = "flex-end" if is_user else "flex-start"
+            bg = "rgba(124,92,255,.16)" if is_user else "var(--surface-2)"
+            bubbles += (f"<div style='display:flex;justify-content:{align};margin:6px 0'>"
+                        f"<div style='max-width:78%;border:1px solid var(--stroke-2);background:{bg};"
+                        f"border-radius:14px;padding:9px 13px'>"
+                        f"<div style='color:var(--faint);font-size:.68rem;margin-bottom:3px'>{who}</div>"
+                        f"<div style='color:#e9edff;font-size:.85rem;line-height:1.5;white-space:pre-wrap'>"
+                        f"{esc((m.get('content','') or '')[:500])}</div></div></div>")
+        st.markdown(f"<div class='card'>{bubbles}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='color:var(--faint);font-size:.72rem;margin:-4px 0 6px'>"
+                    f"共 {_wm.get('round_count', 0)} 轮 · 会话 "
+                    f"{esc((st.session_state.get('mem_sid') or '')[:8])}… · 短期记忆随会话累积，"
+                    f"超阈值自动压缩为摘要</div>", unsafe_allow_html=True)
 
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
     main, side = st.columns([1.4, 1], gap="large")
@@ -509,6 +569,28 @@ if (go or _autorun) and query.strip():
                     unsafe_allow_html=True,
                 )
 
+        if recalled or mem_writes:
+            st.markdown("<div class='eyebrow'>Memory · 本轮记忆</div>", unsafe_allow_html=True)
+            if recalled:
+                cards = ""
+                for m in recalled:
+                    ico, lab, col = MEM_KIND.get(m.get("kind"), ("🧠", "记忆", "#9aa6c4"))
+                    cards += (f"<div class='ev'><div class='ev-top'>"
+                              f"<span class='pill' style='background:{col}22;color:{col}'>{ico} {lab}</span>"
+                              f"<span class='ev-sc'>召回 · 注入回答</span></div>"
+                              f"<div class='ev-txt' style='margin-top:8px'>{esc(m.get('text'))}</div></div>")
+                st.markdown("<div style='color:var(--faint);font-size:.75rem;margin-bottom:6px'>"
+                            "召回（注入到本次回答的用户画像）</div>" + cards, unsafe_allow_html=True)
+            if mem_writes:
+                badges = ""
+                for w in mem_writes:
+                    ico, lab, col = MEM_KIND.get(w.get("kind"), ("🧠", "记忆", "#9aa6c4"))
+                    tag = "冲突更新" if int(w.get("version", 1)) > 1 else "写入"
+                    badges += (f"<span class='pill' style='background:{col}22;color:{col}'>"
+                               f"{ico} {tag}·{lab} v{esc(w.get('version'))}：{esc(w.get('text'))}</span>")
+                st.markdown("<div style='color:var(--faint);font-size:.75rem;margin:10px 0 6px'>"
+                            "本轮写入 / 更新（经去重·冲突演化）</div>" + badges, unsafe_allow_html=True)
+
         st.markdown("<div class='eyebrow'>Retrieved evidence</div>", unsafe_allow_html=True)
         for i, e in enumerate(evidence, 1):
             ev = asdict(e) if is_dataclass(e) else e
@@ -531,7 +613,15 @@ if (go or _autorun) and query.strip():
         for step in trace:
             node = step.get("node", "?")
             title, _sub = NODE_LABELS.get(node, (node, ""))
-            if node == "planner":
+            if node == "memory_retrieve":
+                d = f"召回 {len(step.get('recalled', []))} 条长期记忆" + \
+                    ("· 有短期上下文" if step.get("has_short") else "")
+            elif node == "memory_write":
+                wrote = step.get("wrote", [])
+                d = "写入 " + (esc(", ".join(wrote)) if wrote else "（无新记忆）")
+            elif node == "summarize":
+                d = f"压缩短期记忆 · summary {esc(step.get('summary_len'))} 字"
+            elif node == "planner":
                 d = "改写 → " + esc(" / ".join(step.get("queries", [])))
             elif node == "retrieval":
                 d = f"iter {esc(step.get('iter'))} · {esc(step.get('mode'))} · {len(step.get('hits', []))} 命中"
@@ -549,9 +639,43 @@ if (go or _autorun) and query.strip():
         nodes_html += "</div>"
         st.markdown(nodes_html, unsafe_allow_html=True)
 
+        # —— 记忆演化审计：现行记忆 + 被覆盖旧值（superseded 链）——
+        st.markdown("<div class='eyebrow' style='margin-top:8px'>Memory evolution · 演化审计</div>",
+                    unsafe_allow_html=True)
+        try:
+            from app.memory.store import get_memory_store
+            _recs = get_memory_store().list_by_user(
+                (st.session_state.get("mem_uid") or "alice").strip())
+        except Exception:
+            _recs = []
+        if _recs:
+            _live = [r for r in _recs if not r.superseded_by]
+            _dead = [r for r in _recs if r.superseded_by]
+            rows = ""
+            for r in sorted(_live, key=lambda x: -getattr(x, "updated_at", 0)):
+                ico, lab, col = MEM_KIND.get(r.kind, ("🧠", "记忆", "#9aa6c4"))
+                chain = ""
+                for o in [o for o in _dead if o.superseded_by == r.mem_id]:
+                    chain += (f"<div style='color:var(--faint);font-size:.72rem;"
+                              f"text-decoration:line-through;margin-top:4px'>"
+                              f"v{esc(o.version)} {esc(o.text)}（已被取代）</div>")
+                rows += (f"<div class='ev' style='padding:11px 14px'>"
+                         f"<span class='pill' style='background:{col}22;color:{col}'>{ico} {lab} v{esc(r.version)}</span>"
+                         f"<span class='ev-sc'>命中 {esc(r.use_count)} 次</span>"
+                         f"<div class='ev-txt' style='margin-top:6px'>{esc(r.text)}</div>{chain}</div>")
+            st.markdown(rows, unsafe_allow_html=True)
+            st.markdown(f"<div style='color:var(--faint);font-size:.72rem;margin-top:2px'>"
+                        f"现行 {len(_live)} 条 · 审计留痕 {len(_dead)} 条</div>",
+                        unsafe_allow_html=True)
+        else:
+            st.markdown("<div style='color:var(--faint);font-size:.78rem'>"
+                        "该用户暂无长期记忆（多问几轮自述偏好即可看到积累）</div>",
+                        unsafe_allow_html=True)
+
         with st.expander("原始 state（调试）"):
             st.json({"iterations": iterations, "verify": verify,
-                     "citations": cites, "trace": trace})
+                     "citations": cites, "recalled_memories": recalled,
+                     "memory_writes": mem_writes, "trace": trace})
 
 else:
     st.markdown(
